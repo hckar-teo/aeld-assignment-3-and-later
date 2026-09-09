@@ -5,10 +5,27 @@
 set -e
 set -u
 
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+
+if [ "${DEBUG:-0}" = "1" ]; then
+	set -x
+fi
+
+on_exit()
+{
+	status=$?
+	if [ "$status" -ne 0 ]; then
+		echo "finder-test.sh failed with exit status $status" >&2
+	fi
+	exit "$status"
+}
+
+trap on_exit EXIT
+
 NUMFILES=10
 WRITESTR=AELD_IS_FUN
 WRITEDIR=/tmp/aeld-data
-username=$(cat conf/username.txt)
+username=$(cat "$SCRIPT_DIR/conf/username.txt")
 
 if [ $# -lt 3 ]
 then
@@ -32,7 +49,7 @@ echo "Writing ${NUMFILES} files containing string ${WRITESTR} to ${WRITEDIR}"
 rm -rf "${WRITEDIR}"
 
 # create $WRITEDIR if not assignment1
-assignment=`cat ../conf/assignment.txt`
+assignment=$(cat "$SCRIPT_DIR/../conf/assignment.txt")
 
 if [ $assignment != 'assignment1' ]
 then
@@ -48,16 +65,16 @@ then
 		exit 1
 	fi
 fi
-#echo "Removing the old writer utility and compiling as a native application"
-#make clean
-#make
+echo "Removing previous build artifacts and compiling the native writer application"
+make -C "$SCRIPT_DIR" clean
+make -C "$SCRIPT_DIR" CROSS_COMPILE=
 
 for i in $( seq 1 $NUMFILES)
 do
-	./writer.sh "$WRITEDIR/${username}$i.txt" "$WRITESTR"
+	"$SCRIPT_DIR/../build/writer" -f "$WRITEDIR/${username}$i.txt" -t "$WRITESTR"
 done
 
-OUTPUTSTRING=$(./finder.sh "$WRITEDIR" "$WRITESTR")
+OUTPUTSTRING=$("$SCRIPT_DIR/finder.sh" "$WRITEDIR" "$WRITESTR")
 
 # remove temporary directories
 rm -rf /tmp/aeld-data
