@@ -6,6 +6,7 @@
 #include <sys/types.h>
 #include <unistd.h>
 #include <getopt.h>
+#include <syslog.h>
 
 /*
  * Create a directory and all missing parent directories.
@@ -94,7 +95,7 @@ static int create_parent_directory(const char *filepath)
     char *path_copy;
     char *last_slash;
     char *parent_dir;
-    int result = 0;
+    int result;
 
     path_copy = strdup(filepath);
 
@@ -106,8 +107,7 @@ static int create_parent_directory(const char *filepath)
     last_slash = strrchr(path_copy, '/');
 
     /*
-     * If there is no '/' in the path, the file is in the
-     * current directory, so there is nothing to create.
+     * No '/' means that the file is in the current directory.
      */
     if (last_slash == NULL)
     {
@@ -151,6 +151,8 @@ int main(int argc, char *argv[])
     const char *writefile = NULL;
     const char *writestr = NULL;
     FILE *file;
+    int option;
+    int exit_status = 0;
 
     static const struct option long_options[] =
     {
@@ -160,13 +162,15 @@ int main(int argc, char *argv[])
         {0, 0, 0, 0}
     };
 
-    int option;
-
     /*
-     * Parse command-line options.
+     * Initialize syslog.
      *
-     * ":" after f/t means the option requires an argument.
+     * "writer" is the program identifier.
+     * LOG_PID adds the process ID.
+     * LOG_USER is the required facility.
      */
+    openlog("writer", LOG_PID, LOG_USER);
+
     while ((option = getopt_long(argc, argv, "f:t:h",
                                  long_options, NULL)) != -1)
     {
@@ -182,28 +186,16 @@ int main(int argc, char *argv[])
 
             case 'h':
                 print_usage(argv[0]);
+                closelog();
                 return 0;
 
             case '?':
             default:
+                syslog(LOG_ERR, "Invalid command-line option");
                 print_usage(argv[0]);
+                closelog();
                 return 1;
         }
-    }
-
-    /*
-     * Both options are mandatory.
-     */
-    if (writefile == NULL)
-    {
-        fprintf(stderr, "Error: --file/-f is required\n");
-        return 1;
-    }
-
-    if (writestr == NULL)
-    {
-        fprintf(stderr, "Error: --text/-t is required\n");
-        return 1;
     }
 
     /*
@@ -211,63 +203,123 @@ int main(int argc, char *argv[])
      */
     if (optind < argc)
     {
+        syslog(LOG_ERR, "Unexpected argument: %s", argv[optind]);
         fprintf(stderr, "Error: unexpected argument '%s'\n", argv[optind]);
+        closelog();
         return 1;
     }
 
-    printf("Inputs are: writefile %s and writestr %s\n",
-           writefile, writestr);
+    /*
+     * Both options are mandatory.
+     */
+    if (writefile == NULL)
+    {
+        syslog(LOG_ERR, "Required option --file/-f was not provided");
+        fprintf(stderr, "Error: --file/-f is required\n");
+        closelog();
+        return 1;
+    }
+
+    if (writestr == NULL)
+    {
+        syslog(LOG_ERR, "Required option --text/-t was not provided");
+        fprintf(stderr, "Error: --text/-t is required\n");
+        closelog();
+        return 1;
+    }
 
     /*
      * Create parent directory hierarchy if necessary.
      */
     if (create_parent_directory(writefile) != 0)
     {
+        syslog(LOG_ERR,
+               "Could not create parent directory for '%s': %s",
+               writefile,
+               strerror(errno));
+
         fprintf(stderr,
                 "Error: could not create parent directory for '%s': %s\n",
                 writefile,
                 strerror(errno));
+
+        closelog();
         return 1;
     }
 
     /*
-     * "w" creates the file if it doesn't exist and truncates
-     * existing content.
+     * Open the file for writing.
+     *
+     * "w":
+     *   - creates the file if it doesn't exist
+     *   - truncates existing content
      */
     file = fopen(writefile, "w");
 
     if (file == NULL)
     {
+        syslog(LOG_ERR,
+               "Could not open file '%s': %s",
+               writefile,
+               strerror(errno));
+
         fprintf(stderr,
                 "Error: could not open file '%s': %s\n",
                 writefile,
                 strerror(errno));
+
+        closelog();
         return 1;
     }
 
     /*
-     * Write text followed by a newline, matching the behavior
-     * of the original Bash script's echo.
+     * Write the text followed by a newline.
      */
     if (fprintf(file, "%s\n", writestr) < 0)
     {
+        syslog(LOG_ERR,
+               "Could not write to file '%s': %s",
+               writefile,
+               strerror(errno));
+
         fprintf(stderr,
                 "Error: could not write to file '%s': %s\n",
                 writefile,
                 strerror(errno));
 
         fclose(file);
+        closelog();
         return 1;
     }
 
+    /*
+     * Close the file.
+     */
     if (fclose(file) != 0)
     {
+        syslog(LOG_ERR,
+               "Could not close file '%s': %s",
+               writefile,
+               strerror(errno));
+
         fprintf(stderr,
                 "Error: could not close file '%s': %s\n",
                 writefile,
                 strerror(errno));
+
+        closelog();
         return 1;
     }
 
-    return 0;
+    /*
+     * Required LOG_DEBUG message.
+     */
+    syslog(LOG_DEBUG,
+           "Writing %s to %s",
+           writestr,
+           writefile);
+
+    closelog();
+
+    return exit_status;
 }
