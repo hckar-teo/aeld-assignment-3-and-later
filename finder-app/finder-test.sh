@@ -65,9 +65,6 @@ then
 		exit 1
 	fi
 fi
-echo "Removing previous build artifacts and compiling the native writer application"
-make -C "$SCRIPT_DIR" clean
-make -C "$SCRIPT_DIR" CROSS_COMPILE=
 
 for i in $( seq 1 $NUMFILES)
 do
