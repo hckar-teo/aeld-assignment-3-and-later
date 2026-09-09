@@ -1,5 +1,10 @@
 #include "systemcalls.h"
 
+#include <fcntl.h>
+#include <stdlib.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
 /**
  * @param cmd the command to execute with system()
  * @return true if the command in @param cmd was executed
@@ -17,7 +22,7 @@ bool do_system(const char *cmd)
  *   or false() if it returned a failure
 */
 
-    return true;
+    return (system(cmd) < 0) ? false : true;
 }
 
 /**
@@ -58,10 +63,24 @@ bool do_exec(int count, ...)
  *   as second argument to the execv() command.
  *
 */
+    pid_t child_pid = fork();
+    int child_status;
+    bool retval = false;
+
+    if (child_pid == 0)
+    {
+        execv(command[0], command);
+        _exit(EXIT_FAILURE);
+    }
+
+    if (child_pid > 0 && waitpid(child_pid, &child_status, 0) == child_pid)
+    {
+        retval = WIFEXITED(child_status) && WEXITSTATUS(child_status) == 0;
+    }
 
     va_end(args);
 
-    return true;
+    return retval;
 }
 
 /**
@@ -84,7 +103,6 @@ bool do_exec_redirect(const char *outputfile, int count, ...)
     // and may be removed
     command[count] = command[count];
 
-
 /*
  * TODO
  *   Call execv, but first using https://stackoverflow.com/a/13784315/1446624 as a refernce,
@@ -92,8 +110,30 @@ bool do_exec_redirect(const char *outputfile, int count, ...)
  *   The rest of the behaviour is same as do_exec()
  *
 */
+    pid_t child_pid = fork();
+    int child_status;
+    bool retval = false;
+
+    if (child_pid == 0)
+    {
+        int output_fd = open(outputfile, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+
+        if (output_fd < 0 || dup2(output_fd, STDOUT_FILENO) < 0)
+        {
+            _exit(EXIT_FAILURE);
+        }
+
+        close(output_fd);
+        execv(command[0], command);
+        _exit(EXIT_FAILURE);
+    }
+
+    if (child_pid > 0 && waitpid(child_pid, &child_status, 0) == child_pid)
+    {
+        retval = WIFEXITED(child_status) && WEXITSTATUS(child_status) == 0;
+    }
 
     va_end(args);
 
-    return true;
+    return retval;
 }
