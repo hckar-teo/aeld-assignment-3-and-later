@@ -2,16 +2,22 @@
 # Script outline to install and build kernel.
 # Author: Siddhant Jajoo.
 
+# this script must be executed in directly in the finder-app directory.
+
 set -e
 set -u
 
 OUTDIR=/tmp/aeld
-KERNEL_REPO=git://git.kernel.org/pub/scm/linux/kernel/git/stable/linux-stable.git
+# to me the original link did not work on the VM, so I changed it to https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git
+# KERNEL_REPO=git://git.kernel.org/pub/scm/linux/kernel/git/stable/linux-stable.git
+KERNEL_REPO=https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux-stable.git
 KERNEL_VERSION=v5.15.163
 BUSYBOX_VERSION=1_33_1
 FINDER_APP_DIR=$(realpath $(dirname $0))
 ARCH=arm64
 CROSS_COMPILE=aarch64-none-linux-gnu-
+# to be used in the later steps of the process.
+CURRENT_DIR=$(pwd)
 
 if [ $# -lt 1 ]
 then
@@ -35,9 +41,15 @@ if [ ! -e ${OUTDIR}/linux-stable/arch/${ARCH}/boot/Image ]; then
     git checkout ${KERNEL_VERSION}
 
     # TODO: Add your kernel build steps here
+    make ARCH=${ARCH} CROSS_COMPILE=${CROSS_COMPILE} mrproper
+    make ARCH=${ARCH} CROSS_COMPILE=${CROSS_COMPILE} defconfig
+    make ARCH=${ARCH} CROSS_COMPILE=${CROSS_COMPILE} all -j$(nproc)
+    make ARCH=${ARCH} CROSS_COMPILE=${CROSS_COMPILE} modules
+    make ARCH=${ARCH} CROSS_COMPILE=${CROSS_COMPILE} dtbs
 fi
 
 echo "Adding the Image in outdir"
+cp ${OUTDIR}/linux-stable/arch/${ARCH}/boot/Image ${OUTDIR}/
 
 echo "Creating the staging directory for the root filesystem"
 cd "$OUTDIR"
@@ -48,11 +60,16 @@ then
 fi
 
 # TODO: Create necessary base directories
+mkdir -p ${OUTDIR}/rootfs
+cd ${OUTDIR}/rootfs
+mkdir -p bin dev etc home lib lib64 proc sbin sys tmp usr var
+mkdir -p usr/bin usr/lib usr/sbin
+mkdir -p var/log
 
 cd "$OUTDIR"
 if [ ! -d "${OUTDIR}/busybox" ]
 then
-git clone git://busybox.net/busybox.git
+git clone https://git.busybox.net/busybox/ # again the original link did not work for me
     cd busybox
     git checkout ${BUSYBOX_VERSION}
     # TODO:  Configure busybox
@@ -61,20 +78,53 @@ else
 fi
 
 # TODO: Make and install busybox
+make distclean
+make defconfig
+make ARCH=${ARCH} CROSS_COMPILE=${CROSS_COMPILE}
+make CONFIG_PREFIX=${OUTDIR}/rootfs ARCH=${ARCH} CROSS_COMPILE=${CROSS_COMPILE} install
+
 
 echo "Library dependencies"
+cd ${OUTDIR}/rootfs # go to the rootfs directory to check the dependencies of busybox binary
 ${CROSS_COMPILE}readelf -a bin/busybox | grep "program interpreter"
 ${CROSS_COMPILE}readelf -a bin/busybox | grep "Shared library"
 
 # TODO: Add library dependencies to rootfs
+echo "Add library dependencies to rootfs"
+SYSROOT=$(${CROSS_COMPILE}gcc --print-sysroot)
+cp ${SYSROOT}/lib/ld-linux-aarch64.so.1 ${OUTDIR}/rootfs/lib
+cp ${SYSROOT}/lib64/libm.so.6 ${OUTDIR}/rootfs/lib64
+cp ${SYSROOT}/lib64/libresolv.so.2 ${OUTDIR}/rootfs/lib64
+cp ${SYSROOT}/lib64/libc.so.6 ${OUTDIR}/rootfs/lib64
 
 # TODO: Make device nodes
+echo "Make device nodes"
+cd ${OUTDIR}/rootfs
+sudo mknod -m 666 dev/null c 1 3
+sudo mknod -m 600 dev/console c 5 1
 
 # TODO: Clean and build the writer utility
+echo "Clean and build the writer utility"
+cd ${CURRENT_DIR} # go to the finder-app directory
+make clean
+make CROSS_COMPILE=${CROSS_COMPILE}
 
-# TODO: Copy the finder related scripts and executables to the /home directory
+# TODO: Copy the finder related scripts and executables to the target /home directory
 # on the target rootfs
+echo "Copy the finder related scripts and executables to the target/home directory"
+cp ../build/writer $OUTDIR/rootfs/home
+cp finder.sh $OUTDIR/rootfs/home
+cp finder-test.sh $OUTDIR/rootfs/home
+cp autorun-qemu.sh $OUTDIR/rootfs/home
+cp -r ../conf $OUTDIR/rootfs/home
 
 # TODO: Chown the root directory
+echo "Chown the root directory"
+cd "$OUTDIR"
+sudo chown -R root:root rootfs
 
 # TODO: Create initramfs.cpio.gz
+echo "Create initramfs.cpio.gz"
+cd ${OUTDIR}/rootfs
+find . | cpio -H newc -ov --owner root:root > ${OUTDIR}/initramfs.cpio
+gzip -f ${OUTDIR}/initramfs.cpio
